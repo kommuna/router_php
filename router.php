@@ -5,30 +5,30 @@ class Router {
 	private static $METHOD;
 	private static $regexpMatches;
 
-	private function matchExact($uri) {
+	function matchExact($uri) {
 		if ($uri === self::$URI) return true;
 		return false;
 	}
 
-	private function matchStartsWith($uri) {
+	function matchStartsWith($uri) {
 		if (strlen($uri) > strlen(self::$URI)) return false;
 		if ( substr(self::$URI, 0, strlen($uri)) === $uri ) return true;
 		return false;
 	}
 
-	private function matchComponent($uri) {
+	function matchComponent($uri) {
 		if (self::matchExact($uri)) return true;
 		if (strlen($uri) == strlen(self::$URI)) return false; //here if they have the same length, they can't match, because matchExact() didn't succeed.
 		if (matchStartsWith($uri) && (substr(self::$URI, strlen($uri), 1) === '/')) return true;
 		return false;
 	}
 
-	private function matchRegex($uri) {
+	function matchRegex($uri) {
 		if (preg_match($uri, self::$URI, self::$regexpMatches)) return true;
 		return false;
 	}
 
-	private function substituteRegex(&$out) {
+	function substituteRegex(&$out) {
 		preg_replace_callback('{\d+}', function($matches) {
 			var_dump($matches);
 		}, $out);
@@ -94,7 +94,7 @@ class Router {
 
 
 	function file($uri, $path, $flags=array()) {
-		if (self::match($uri, $path, isset($flags['MATCH'])?$flags['MATCH']:'EXACT')) {
+		if (self::match($uri, $path, isset($flags['MATCH'])?$flags['MATCH']:'STARTS')) {
 			if (self::checkMethod(array('GET'), $flags)) self::returnFile($path);
 			return false;
 		}
@@ -102,7 +102,7 @@ class Router {
 	}
 
 	function proxy($uri, $url, $flags=array()) {
-		if (self::match($uri, $url, isset($flags['MATCH'])?$flags['MATCH']:'EXACT')) {
+		if (self::match($uri, $url, isset($flags['MATCH'])?$flags['MATCH']:'STARTS')) {
 			if (self::checkMethod(array('GET', 'POST'), $flags)) self::returnProxy($url);
 			return false;
 		}
