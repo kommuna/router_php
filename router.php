@@ -1,9 +1,24 @@
 <?php
 
+if (!function_exists('apache_request_headers')) {
+	function apache_request_headers() {
+		foreach($_SERVER as $key=>$value) {
+			if (substr($key,0,5)=="HTTP_") {
+				$key=str_replace(" ","-",ucwords(strtolower(str_replace("_"," ",substr($key,5)))));
+				$out[$key]=$value;
+			}
+		}
+		return $out;
+	}
+} 
+
+
 class Router {
 	private static $URI;
 	private static $METHOD;
 	private static $regexpMatches;
+	private static $fileAccel;
+	private static $proxyAccel;
 
 	function matchExact($uri) {
 		if ($uri === self::$URI) return true;
@@ -35,14 +50,26 @@ class Router {
 	}
 
 
-	private function match($uri, &$out, $matchMethod) {
+	private function match($uri, &$out, $matchMethod, $flags) {
 		switch ($matchMethod) {
 			case 'EXACT':
 				return self::matchExact($uri);
 			case 'STARTS':
-				return self::matchStartsWith($uri);
+				if (self::matchStartsWith($uri)) {
+					if (!isset($flags['DONT_APPEND_TAIL'])) {
+						$out .= substr(self::$URI, strlen($uri));
+					}
+					return true;
+				}
+				return false;
 			case 'COMPONENT':
-				return self::matchComponent($uri);
+				if (self::matchComponent($uri)) {
+					if (!isset($flags['DONT_APPEND_TAIL'])) {
+						$out .= substr(self::$URI, strlen($uri));
+					}
+					return true;
+				}
+				return false;
 			case 'REGEX':
 				if (self::matchRegex($uri)) {
 					self::substituteRegex($out);
@@ -74,13 +101,48 @@ class Router {
 		if (!file_exists($path)) self::returnError('404', 'Not found');
 		if (!is_file($path)) self::returnError('405', 'Not a file');
 		if (!is_readable($path)) self::returnError('403', 'Forbidden');
-		
+		header('Content-type: ' . self::getFileMimeType($path));
+		readfile($path);
+		exit();
 	}
 
+	private function readURL($url) {
+		$ch = curl_init($url.'?'.$_SERVER['QUERY_STRING']);
+		curl_setopt($ch, CURLOPT_HEADER, 1);
+		curl_setopt($ch, CURLOPT_CUSTOMREQUEST, self::$METHOD);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+		curl_setopt($ch, CURLOPT_INFILE, 'php://input');
+		$request_headers = apache_request_headers();
+		if (isset($request_headers['Host'])) unset($request_headers['Host']);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $request_headers);
+		$out = curl_exec($ch);
+		if ($out === false) {
+			self::returnError('502', curl_error ($ch) . '('.$url.')');
+		}
+		curl_close($ch);
+		$offset=0;
+		while(true) {
+			$h = strpos($out, "\r\n", $offset);
+			if ($h === false) {
+				break;
+			}
+			if ($h == $offset) {
+				//end of headers
+				$offset+=2;
+				break;
+			}
+			header(substr($out, $offset, $h - $offset));
+			$offset = $h + 2;
+		}
+		print(substr($out, $offset));
+		exit();
+	}
 
 	function init() {
 		self::$URI=$_SERVER['REQUEST_URI'];
 		self::$METHOD=$_SERVER['REQUEST_METHOD'];
+		self::$fileAccel=null;
+		self::$proxyAccel=null;
 	}
 
 	function setURI($uri) {
@@ -91,25 +153,37 @@ class Router {
 		self::$METHOD=$method;
 	}
 
+	function setFileAccel($prefix) {
+		self::$fileAccel = $prefix;
+	}
+
+	function setProxyAccel($prefix) {
+		self::$proxyAccel = $prefix;
+	}
+
 	//TODO add real file mechanism
 	function returnFile($path) {
-		print('X-Accel-Redirect: ' . $path);
+		if (is_null(self::$fileAccel)) self::readFile($path);
+		header('X-Accel-Redirect: ' . self::$fileAccel . $path);
 		exit();
 	}
 
 	//TODO add real proxy mechanism
 	function returnProxy($url) {
-		print('X-Accel-Redirect: http://' . $url);
+		if (is_null(self::$proxyAccel)) self::readURL($url);
+		header('X-Accel-Redirect: ' . self::$proxyAccel . $url);
 		exit();
 	}
 
 	function returnError($code, $explanation) {
-		print('HTTP/1.1 ' . $code . ' ' . $explanation);
+		header('HTTP/1.1 ' . $code . ' ' . $explanation);
+		header('Content-type: text/plain');
+		print($code . ': ' . $explanation);
 		exit();
 	}
 
 	function file($uri, $path, $flags=array()) {
-		if (self::match($uri, $path, isset($flags['MATCH'])?$flags['MATCH']:'STARTS')) {
+		if (self::match($uri, $path, isset($flags['MATCH'])?$flags['MATCH']:'STARTS', $flags)) {
 			if (self::checkMethod(array('GET'), $flags)) self::returnFile($path);
 			return false;
 		}
@@ -117,20 +191,12 @@ class Router {
 	}
 
 	function proxy($uri, $url, $flags=array()) {
-		if (self::match($uri, $url, isset($flags['MATCH'])?$flags['MATCH']:'STARTS')) {
+		if (self::match($uri, $url, isset($flags['MATCH'])?$flags['MATCH']:'STARTS', $flags)) {
 			if (self::checkMethod(array('GET', 'POST'), $flags)) self::returnProxy($url);
 			return false;
 		}
 		return false;
 	}
-
-
-
-
-
-
-
-
 
 
 	private function getMimeTypeByExtension ($ext) {
@@ -205,5 +271,8 @@ class Router {
 		}
 	}
 }
+
+
+Router::init();
 
 ?>
