@@ -15,40 +15,55 @@ if (!function_exists('apache_request_headers')) {
 
 class Router {
 	private static $URI;
+	private static $URIPath;
 	private static $METHOD;
 	private static $regexpMatches;
 	private static $fileAccel;
 	private static $proxyAccel;
 
 	function matchExact($uri) {
-		if ($uri === self::$URI) return true;
+		if ($uri === self::$URIPath) return true;
 		return false;
 	}
 
 	function matchStartsWith($uri) {
-		if (strlen($uri) > strlen(self::$URI)) return false;
-		if ( substr(self::$URI, 0, strlen($uri)) === $uri ) return true;
+		if (strlen($uri) > strlen(self::$URIPath)) return false;
+		if ( substr(self::$URIPath, 0, strlen($uri)) === $uri ) return true;
 		return false;
 	}
 
 	function matchComponent($uri) {
 		if (self::matchExact($uri)) return true;
-		if (strlen($uri) == strlen(self::$URI)) return false; //here if they have the same length, they can't match, because matchExact() didn't succeed.
-		if (matchStartsWith($uri) && (substr(self::$URI, strlen($uri), 1) === '/')) return true;
+		if (strlen($uri) == strlen(self::$URIPath)) return false; //here if they have the same length, they can't match, because matchExact() didn't succeed.
+		if (matchStartsWith($uri) && (substr(self::$URIPath, strlen($uri), 1) === '/')) return true;
 		return false;
 	}
 
 	function matchRegex($uri) {
-		if (preg_match($uri, self::$URI, self::$regexpMatches)) return true;
+		if (preg_match($uri, self::$URIPath, self::$regexpMatches)) return true;
 		return false;
 	}
 
 	function substituteRegex(&$out) {
-		preg_replace_callback('{\d+}', function($matches) {
-			var_dump($matches);
+		$out = preg_replace_callback('/{(\d+)}/', function($matches) {
+			$match_index = intval($matches[1]);
+			$ret = '';
+			if (isset(self::$regexpMatches[$match_index])) {
+				$ret = self::$regexpMatches[$match_index];
+			}
+			print("Replacing ".$matches[0]." with '".$ret."'\n");
+			return $ret;
 		}, $out);
 	}
 
+	private function updateURIPath() {
+		$q = strpos(self::$URI, '?');
+		if (false !== $q) {
+			self::$URIPath = substr(self::$URI, 0, $q);
+		} else {
+			self::$URIPath = self::$URI;
+		}
+	}
 
 	private function match($uri, &$out, $matchMethod, $flags) {
 		switch ($matchMethod) {
@@ -57,7 +72,7 @@ class Router {
 			case 'STARTS':
 				if (self::matchStartsWith($uri)) {
 					if (!isset($flags['DONT_APPEND_TAIL'])) {
-						$out .= substr(self::$URI, strlen($uri));
+						$out .= substr(self::$URIPath, strlen($uri));
 					}
 					return true;
 				}
@@ -65,7 +80,7 @@ class Router {
 			case 'COMPONENT':
 				if (self::matchComponent($uri)) {
 					if (!isset($flags['DONT_APPEND_TAIL'])) {
-						$out .= substr(self::$URI, strlen($uri));
+						$out .= substr(self::$URIPath, strlen($uri));
 					}
 					return true;
 				}
@@ -73,6 +88,7 @@ class Router {
 			case 'REGEX':
 				if (self::matchRegex($uri)) {
 					self::substituteRegex($out);
+					print($out);
 					return true;
 				}
 				return false;
@@ -97,23 +113,37 @@ class Router {
 		return self::getMimeTypeByExtension($extension);
 	}
 
-	private function readFile($path) {
-		if (!file_exists($path)) self::returnError('404', 'Not found');
-		if (!is_file($path)) self::returnError('405', 'Not a file');
-		if (!is_readable($path)) self::returnError('403', 'Forbidden');
+	private function readFile($path, $flags) {
+		if (!file_exists($path)) {
+			error_log("Path $path doesn't exist");
+			self::returnError('404', 'Not found');
+		}
+		if (!is_file($path)) {
+			error_log("Path $path is not a file");
+			self::returnError('405', 'Not a file');
+		}
+		if (!is_readable($path)) {
+			error_log("Path $path is not readable");
+			self::returnError('403', 'Forbidden');
+		}
 		header('Content-type: ' . self::getFileMimeType($path));
 		readfile($path);
 		exit();
 	}
 
-	private function readURL($url) {
+	private function readURL($url, $flags) {
 		$ch = curl_init($url.'?'.$_SERVER['QUERY_STRING']);
 		curl_setopt($ch, CURLOPT_HEADER, 1);
 		curl_setopt($ch, CURLOPT_CUSTOMREQUEST, self::$METHOD);
 		curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-		curl_setopt($ch, CURLOPT_INFILE, 'php://input');
+		if (self::$METHOD == 'POST' || self::$METHOD == 'PUT') {
+			curl_setopt($ch, CURLOPT_INFILE, 'php://input');
+		}
 		$request_headers = apache_request_headers();
 		if (isset($request_headers['Host'])) unset($request_headers['Host']);
+		if (is_array($flags['PROXY_REQUEST_HEADERS'])) {
+			$request_headers = $flags['PROXY_REQUEST_HEADERS'] + $request_headers;
+		}
 		curl_setopt($ch, CURLOPT_HTTPHEADER, $request_headers);
 		$out = curl_exec($ch);
 		if ($out === false) {
@@ -143,10 +173,12 @@ class Router {
 		self::$METHOD=$_SERVER['REQUEST_METHOD'];
 		self::$fileAccel=null;
 		self::$proxyAccel=null;
+		self::updateURIPath();
 	}
 
 	function setURI($uri) {
 		self::$URI=$uri;
+		self::updateURIPath();
 	}
 
 	function setMethod($method) {
@@ -161,16 +193,14 @@ class Router {
 		self::$proxyAccel = $prefix;
 	}
 
-	//TODO add real file mechanism
-	function returnFile($path) {
-		if (is_null(self::$fileAccel)) self::readFile($path);
+	function returnFile($path, $flags) {
+		if (is_null(self::$fileAccel)) self::readFile($path, $flags);
 		header('X-Accel-Redirect: ' . self::$fileAccel . $path);
 		exit();
 	}
 
-	//TODO add real proxy mechanism
-	function returnProxy($url) {
-		if (is_null(self::$proxyAccel)) self::readURL($url);
+	function returnProxy($url, $flags) {
+		if (is_null(self::$proxyAccel)) self::readURL($url, $flags);
 		header('X-Accel-Redirect: ' . self::$proxyAccel . $url);
 		exit();
 	}
@@ -184,7 +214,7 @@ class Router {
 
 	function file($uri, $path, $flags=array()) {
 		if (self::match($uri, $path, isset($flags['MATCH'])?$flags['MATCH']:'STARTS', $flags)) {
-			if (self::checkMethod(array('GET'), $flags)) self::returnFile($path);
+			if (self::checkMethod(array('GET'), $flags)) self::returnFile($path, $flags);
 			return false;
 		}
 		return false;
@@ -192,7 +222,7 @@ class Router {
 
 	function proxy($uri, $url, $flags=array()) {
 		if (self::match($uri, $url, isset($flags['MATCH'])?$flags['MATCH']:'STARTS', $flags)) {
-			if (self::checkMethod(array('GET', 'POST'), $flags)) self::returnProxy($url);
+			if (self::checkMethod(array('GET', 'POST'), $flags)) self::returnProxy($url, $flags);
 			return false;
 		}
 		return false;
