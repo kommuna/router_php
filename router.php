@@ -21,30 +21,30 @@ class Router {
 	private static $fileAccel;
 	private static $proxyAccel;
 
-	function matchExact($uri) {
+	private function matchExact($uri) {
 		if ($uri === self::$URIPath) return true;
 		return false;
 	}
 
-	function matchStartsWith($uri) {
+	private function matchStartsWith($uri) {
 		if (strlen($uri) > strlen(self::$URIPath)) return false;
 		if ( substr(self::$URIPath, 0, strlen($uri)) === $uri ) return true;
 		return false;
 	}
 
-	function matchComponent($uri) {
+	private function matchComponent($uri) {
 		if (self::matchExact($uri)) return true;
 		if (strlen($uri) == strlen(self::$URIPath)) return false; //here if they have the same length, they can't match, because matchExact() didn't succeed.
 		if (matchStartsWith($uri) && (substr(self::$URIPath, strlen($uri), 1) === '/')) return true;
 		return false;
 	}
 
-	function matchRegex($uri) {
+	private function matchRegex($uri) {
 		if (preg_match($uri, self::$URIPath, self::$regexpMatches)) return true;
 		return false;
 	}
 
-	function substituteRegex(&$out) {
+	private function substituteRegex(&$out) {
 		$out = preg_replace_callback('/{(\d+)}/', function($matches) {
 			$match_index = intval($matches[1]);
 			$ret = '';
@@ -168,7 +168,7 @@ class Router {
 		exit();
 	}
 
-	function init() {
+	public function init() {
 		self::$URI=$_SERVER['REQUEST_URI'];
 		self::$METHOD=$_SERVER['REQUEST_METHOD'];
 		self::$fileAccel=null;
@@ -176,43 +176,43 @@ class Router {
 		self::updateURIPath();
 	}
 
-	function setURI($uri) {
+	public function setURI($uri) {
 		self::$URI=$uri;
 		self::updateURIPath();
 	}
 
-	function setMethod($method) {
+	public function setMethod($method) {
 		self::$METHOD=$method;
 	}
 
-	function setFileAccel($prefix) {
+	public function setFileAccel($prefix) {
 		self::$fileAccel = $prefix;
 	}
 
-	function setProxyAccel($prefix) {
+	public function setProxyAccel($prefix) {
 		self::$proxyAccel = $prefix;
 	}
 
-	function returnFile($path, $flags) {
+	public function returnFile($path, $flags) {
 		if (is_null(self::$fileAccel)) self::readFile($path, $flags);
 		header('X-Accel-Redirect: ' . self::$fileAccel . $path);
 		exit();
 	}
 
-	function returnProxy($url, $flags) {
+	public function returnProxy($url, $flags) {
 		if (is_null(self::$proxyAccel)) self::readURL($url, $flags);
 		header('X-Accel-Redirect: ' . self::$proxyAccel . $url);
 		exit();
 	}
 
-	function returnError($code, $explanation) {
+	public function returnError($code, $explanation) {
 		header('HTTP/1.1 ' . $code . ' ' . $explanation);
 		header('Content-type: text/plain');
 		print($code . ': ' . $explanation);
 		exit();
 	}
 
-	function file($uri, $path, $flags=array()) {
+	public function file($uri, $path, $flags=array()) {
 		if (self::match($uri, $path, isset($flags['MATCH'])?$flags['MATCH']:'STARTS', $flags)) {
 			if (self::checkMethod(array('GET'), $flags)) self::returnFile($path, $flags);
 			return false;
@@ -220,7 +220,7 @@ class Router {
 		return false;
 	}
 
-	function proxy($uri, $url, $flags=array()) {
+	public function proxy($uri, $url, $flags=array()) {
 		if (self::match($uri, $url, isset($flags['MATCH'])?$flags['MATCH']:'STARTS', $flags)) {
 			if (self::checkMethod(array('GET', 'POST'), $flags)) self::returnProxy($url, $flags);
 			return false;

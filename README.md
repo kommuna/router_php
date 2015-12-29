@@ -83,3 +83,29 @@ Sets current request mothod to something
 setMethod($method)
 ```
 By default $_SERVER['REQUEST_METHOD'] is used, but agan you can override it.
+
+Set nginx file X-Accell-Redirect prefix
+```
+setFileAccell($prefix)
+```
+If you set it to something, the engine will generate a request with X-Accell-Redirect header instead of actually returning a file. It's used with nginx in production environment for high performance
+
+Set nginx proxy X-Accell-Redirect prefix
+```
+setProxyAccell($prefix)
+```
+If you set it to something, the engine will generate a request with X-Accell-Redirect header instead of actually making a proxy request. It's used with nginx in production environment for high performance
+
+Return response with an error code
+```
+returnError($code, $explanation)
+```
+Useful to return errors like 404 or 403 or whatever
+
+Return a file or make a proxy request
+```
+returnFile($path, $flags)
+returnProxy($path, $flags)
+```
+Useful to return a file or a proxy request without any conditions
+
